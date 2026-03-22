@@ -7,7 +7,7 @@
  * Configuration via environment variables:
  *   QMD_REMOTE_LLM_URL     - API base URL (default: https://openrouter.ai/api/v1)
  *   QMD_REMOTE_LLM_API_KEY - API key (required)
- *   QMD_REMOTE_LLM_MODEL   - Model for generation/reranking (default: anthropic/claude-sonnet-4)
+ *   QMD_REMOTE_LLM_MODEL   - Model for generation/reranking (default: openai/gpt-4.1-nano)
  */
 
 import {
@@ -26,7 +26,7 @@ import {
 } from "./llm.js";
 
 const DEFAULT_REMOTE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_REMOTE_MODEL = "anthropic/claude-sonnet-4";
+const DEFAULT_REMOTE_MODEL = "openai/gpt-4.1-nano";
 
 export type RemoteLLMConfig = {
   /** API base URL (default: https://openrouter.ai/api/v1) */
@@ -79,12 +79,17 @@ export class RemoteLLM implements LLM {
   // ==========================================================================
 
   async generate(prompt: string, options?: GenerateOptions): Promise<GenerateResult | null> {
-    const response = await this._chatCompletion([
-      { role: "user", content: prompt },
-    ], {
-      maxTokens: options?.maxTokens ?? 1024,
-      temperature: options?.temperature ?? 0.7,
-    });
+    let response: string | null = null;
+    try {
+      response = await this._chatCompletion([
+        { role: "user", content: prompt },
+      ], {
+        maxTokens: options?.maxTokens ?? 1024,
+        temperature: options?.temperature ?? 0.7,
+      });
+    } catch (error) {
+      console.error("RemoteLLM generate failed:", error);
+    }
 
     if (!response) return null;
 
@@ -219,7 +224,8 @@ Include an entry for every document index provided. Scores should be floats betw
     }
 
     // Build score map, defaulting to 0 for missing entries
-    const scoreMap = new Map(scores.map(s => [s.index, s.score]));
+    // Normalize from 0-10 to 0-1 to match LlamaCpp cosine-similarity scale
+    const scoreMap = new Map(scores.map(s => [s.index, s.score / 10]));
 
     const results = documents
       .map((doc, i) => ({
@@ -272,6 +278,7 @@ Include an entry for every document index provided. Scores should be floats betw
         "Authorization": `Bearer ${this.apiKey}`,
       },
       body,
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {
