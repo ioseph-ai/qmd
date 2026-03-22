@@ -44,22 +44,30 @@ export type RemoteLLMConfig = {
  * OpenAI-compatible API, while keeping embeddings local via LlamaCpp.
  */
 export class RemoteLLM implements LLM {
-  private readonly localLlm: LlamaCpp;
+  private _localLlm: LlamaCpp | null = null;
   private readonly remoteUrl: string;
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly embedModel: string | undefined;
 
   constructor(config: RemoteLLMConfig) {
     this.remoteUrl = (config.remoteUrl ?? DEFAULT_REMOTE_URL).replace(/\/$/, "");
     this.apiKey = config.apiKey;
     this.model = config.model ?? DEFAULT_REMOTE_MODEL;
+    this.embedModel = config.embedModel;
+    // Local LlamaCpp for embeddings is created lazily on first embed() call
+  }
 
-    // Local LlamaCpp used only for embeddings
-    this.localLlm = new LlamaCpp({
-      embedModel: config.embedModel,
-      inactivityTimeoutMs: 5 * 60 * 1000,
-      disposeModelsOnInactivity: true,
-    });
+  /** Lazy-init local LlamaCpp — avoids costly node-llama-cpp startup when only remote ops are needed */
+  private get localLlm(): LlamaCpp {
+    if (!this._localLlm) {
+      this._localLlm = new LlamaCpp({
+        embedModel: this.embedModel,
+        inactivityTimeoutMs: 5 * 60 * 1000,
+        disposeModelsOnInactivity: true,
+      });
+    }
+    return this._localLlm;
   }
 
   // ==========================================================================
