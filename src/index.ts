@@ -65,7 +65,9 @@ import {
 } from "./store.js";
 import {
   LlamaCpp,
+  type LLM,
 } from "./llm.js";
+import { RemoteLLM } from "./remote-llm.js";
 import {
   setConfigSource,
   loadConfig,
@@ -358,12 +360,27 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   }
   // else: DB-only mode — no external config, use existing store_collections
 
-  // Create a per-store LlamaCpp instance — lazy-loads models on first use,
-  // auto-unloads after 5 min inactivity to free VRAM.
-  const llm = new LlamaCpp({
-    inactivityTimeoutMs: 5 * 60 * 1000,
-    disposeModelsOnInactivity: true,
-  });
+  // Create a per-store LLM instance.
+  // If QMD_REMOTE_LLM_URL and QMD_REMOTE_LLM_API_KEY are set, use the remote API
+  // for generation/reranking while keeping embeddings local.
+  // Otherwise, use LlamaCpp entirely (existing behavior).
+  const remoteUrl = process.env.QMD_REMOTE_LLM_URL;
+  const remoteApiKey = process.env.QMD_REMOTE_LLM_API_KEY;
+
+  let llm: LLM;
+  if (remoteUrl && remoteApiKey) {
+    llm = new RemoteLLM({
+      remoteUrl,
+      apiKey: remoteApiKey,
+      model: process.env.QMD_REMOTE_LLM_MODEL ?? "anthropic/claude-sonnet-4",
+      embedModel: process.env.QMD_EMBED_MODEL,
+    });
+  } else {
+    llm = new LlamaCpp({
+      inactivityTimeoutMs: 5 * 60 * 1000,
+      disposeModelsOnInactivity: true,
+    });
+  }
   internal.llm = llm;
 
   const store: QMDStore = {
