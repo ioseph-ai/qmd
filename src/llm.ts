@@ -551,9 +551,11 @@ export class LlamaCpp implements LLM {
    */
   private async ensureLlama(): Promise<Llama> {
     if (!this.llama) {
+      // Skip costly GPU build attempts when explicitly on CPU or no GPU available.
+      // Set QMD_GPU_BUILD=1 to re-enable autoAttempt (e.g. after installing CUDA/Vulkan).
+      const skipGpuBuild = process.env.QMD_GPU_BUILD !== "1";
       const llama = await getLlama({
-        // attempt to build
-        build: "autoAttempt",
+        build: skipGpuBuild ? "never" : "autoAttempt",
         logLevel: LlamaLogLevel.error
       });
 
