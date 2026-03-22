@@ -372,7 +372,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
     llm = new RemoteLLM({
       remoteUrl,
       apiKey: remoteApiKey,
-      model: process.env.QMD_REMOTE_LLM_MODEL ?? "openai/gpt-4.1-nano",
+      model: process.env.QMD_REMOTE_LLM_MODEL ?? "amazon/nova-micro-v1",
       embedModel: process.env.QMD_EMBED_MODEL,
     });
   } else {

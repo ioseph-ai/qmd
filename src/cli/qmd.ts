@@ -132,7 +132,7 @@ function getStore(): ReturnType<typeof createStore> {
         model: process.env.QMD_REMOTE_LLM_MODEL ?? "openai/gpt-4.1-nano",
         embedModel: process.env.QMD_EMBED_MODEL,
       });
-      process.stderr.write(`QMD Remote LLM: ${process.env.QMD_REMOTE_LLM_MODEL ?? "openai/gpt-4.1-nano"} via ${remoteUrl}\n`);
+      process.stderr.write(`QMD Remote LLM: ${process.env.QMD_REMOTE_LLM_MODEL ?? "amazon/nova-micro-v1"} via ${remoteUrl}\n`);
     }
   }
   return store;

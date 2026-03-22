@@ -7,7 +7,7 @@
  * Configuration via environment variables:
  *   QMD_REMOTE_LLM_URL     - API base URL (default: https://openrouter.ai/api/v1)
  *   QMD_REMOTE_LLM_API_KEY - API key (required)
- *   QMD_REMOTE_LLM_MODEL   - Model for generation/reranking (default: openai/gpt-4.1-nano)
+ *   QMD_REMOTE_LLM_MODEL   - Model for generation/reranking (default: amazon/nova-micro-v1)
  */
 
 import {
