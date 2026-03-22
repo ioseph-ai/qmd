@@ -77,7 +77,6 @@ import {
   type ReindexResult,
 } from "../store.js";
 import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, withLLMSession, pullModels, DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI, DEFAULT_MODEL_CACHE_DIR } from "../llm.js";
-import { RemoteLLM } from "../remote-llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -121,19 +120,7 @@ function getStore(): ReturnType<typeof createStore> {
     } catch {
       // Config may not exist yet — that's fine, DB works without it
     }
-    // If QMD_REMOTE_LLM_URL and QMD_REMOTE_LLM_API_KEY are set, use remote API
-    // for generation/reranking while keeping embeddings local.
-    const remoteUrl = process.env.QMD_REMOTE_LLM_URL;
-    const remoteApiKey = process.env.QMD_REMOTE_LLM_API_KEY;
-    if (remoteUrl && remoteApiKey) {
-      store.llm = new RemoteLLM({
-        remoteUrl,
-        apiKey: remoteApiKey,
-        model: process.env.QMD_REMOTE_LLM_MODEL ?? "openai/gpt-4.1-nano",
-        embedModel: process.env.QMD_EMBED_MODEL,
-      });
-      process.stderr.write(`QMD Remote LLM: ${process.env.QMD_REMOTE_LLM_MODEL ?? "amazon/nova-micro-v1"} via ${remoteUrl}\n`);
-    }
+  // RemoteLLM wiring is handled by createStore() in index.ts — do not duplicate here.
   }
   return store;
 }

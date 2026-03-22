@@ -26,14 +26,14 @@ import {
 } from "./llm.js";
 
 const DEFAULT_REMOTE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_REMOTE_MODEL = "openai/gpt-4.1-nano";
+const DEFAULT_REMOTE_MODEL = "amazon/nova-micro-v1";
 
 export type RemoteLLMConfig = {
   /** API base URL (default: https://openrouter.ai/api/v1) */
   remoteUrl?: string;
   /** API key (required) */
   apiKey: string;
-  /** Model to use for generation/reranking (default: anthropic/claude-sonnet-4) */
+  /** Model to use for generation/reranking (default: amazon/nova-micro-v1) */
   model?: string;
   /** Optional embed model URI to pass to local LlamaCpp instance */
   embedModel?: string;

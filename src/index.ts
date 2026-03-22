@@ -375,6 +375,7 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
       model: process.env.QMD_REMOTE_LLM_MODEL ?? "amazon/nova-micro-v1",
       embedModel: process.env.QMD_EMBED_MODEL,
     });
+    process.stderr.write(`QMD Remote LLM: ${process.env.QMD_REMOTE_LLM_MODEL ?? "amazon/nova-micro-v1"} via ${remoteUrl}\n`);
   } else {
     llm = new LlamaCpp({
       inactivityTimeoutMs: 5 * 60 * 1000,
