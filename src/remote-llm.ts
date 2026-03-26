@@ -1,13 +1,20 @@
 /**
  * remote-llm.ts - Remote LLM implementation using OpenAI-compatible APIs
  *
- * Provides generate, expandQuery, and rerank via a remote API (e.g. OpenRouter),
- * while delegating embed/embedBatch to a local LlamaCpp instance for fast CPU embeddings.
+ * Provides generate, expandQuery, and rerank via a remote API (e.g. OpenRouter).
+ * Embeddings can be either:
+ *   - Local via LlamaCpp (default, when embedModel is a GGUF/HuggingFace URI)
+ *   - Remote via OpenRouter /embeddings API (when embedModel is an OpenRouter model ID)
+ *
+ * To use remote embeddings, set QMD_EMBED_MODEL to an OpenRouter model like
+ * "qwen/qwen3-embedding-8b". The remote embedding endpoint is detected automatically
+ * when the model doesn't match a local GGUF pattern (hf:*, *.gguf).
  *
  * Configuration via environment variables:
  *   QMD_REMOTE_LLM_URL     - API base URL (default: https://openrouter.ai/api/v1)
  *   QMD_REMOTE_LLM_API_KEY - API key (required)
  *   QMD_REMOTE_LLM_MODEL   - Model for generation/reranking (default: amazon/nova-micro-v1)
+ *   QMD_EMBED_MODEL        - Embedding model (local GGUF or remote OpenRouter model ID)
  */
 
 import {
@@ -35,51 +42,161 @@ export type RemoteLLMConfig = {
   apiKey: string;
   /** Model to use for generation/reranking (default: amazon/nova-micro-v1) */
   model?: string;
-  /** Optional embed model URI to pass to local LlamaCpp instance */
+  /** Embed model URI — local GGUF path or remote OpenRouter model ID */
   embedModel?: string;
 };
 
 /**
+ * Check if an embed model URI should use the remote /embeddings API
+ * instead of local LlamaCpp. Returns false for local GGUF patterns (hf:*, *.gguf).
+ */
+function isRemoteEmbedModel(embedModel: string | undefined): boolean {
+  if (!embedModel) return false;
+  // Local patterns: hf:..., *.gguf, or empty
+  if (embedModel.startsWith("hf:")) return false;
+  if (embedModel.endsWith(".gguf")) return false;
+  return true;
+}
+
+/**
  * LLM implementation that offloads text generation and reranking to a remote
- * OpenAI-compatible API, while keeping embeddings local via LlamaCpp.
+ * OpenAI-compatible API. Embeddings can be local (LlamaCpp) or remote (OpenRouter).
  */
 export class RemoteLLM implements LLM {
-  private _localLlm: LlamaCpp | null = null;
   private readonly remoteUrl: string;
   private readonly apiKey: string;
   private readonly model: string;
   private readonly embedModel: string | undefined;
+  private readonly remoteEmbed: boolean;
+  private localLlm: LlamaCpp | null;
 
   constructor(config: RemoteLLMConfig) {
     this.remoteUrl = (config.remoteUrl ?? DEFAULT_REMOTE_URL).replace(/\/$/, "");
     this.apiKey = config.apiKey;
     this.model = config.model ?? DEFAULT_REMOTE_MODEL;
     this.embedModel = config.embedModel;
-    // Local LlamaCpp for embeddings is created lazily on first embed() call
-  }
+    this.remoteEmbed = isRemoteEmbedModel(config.embedModel);
 
-  /** Lazy-init local LlamaCpp — avoids costly node-llama-cpp startup when only remote ops are needed */
-  private get localLlm(): LlamaCpp {
-    if (!this._localLlm) {
-      this._localLlm = new LlamaCpp({
-        embedModel: this.embedModel,
+    // Only create local LlamaCpp for embeddings when using local GGUF models
+    if (!this.remoteEmbed) {
+      this.localLlm = new LlamaCpp({
+        embedModel: config.embedModel,
         inactivityTimeoutMs: 5 * 60 * 1000,
         disposeModelsOnInactivity: true,
       });
+    } else {
+      this.localLlm = null;
+      console.log(`RemoteLLM: using remote embedding model "${config.embedModel}"`);
     }
-    return this._localLlm;
   }
 
   // ==========================================================================
-  // Embeddings — delegated to local LlamaCpp
+  // Embeddings — remote (OpenRouter) or local (LlamaCpp)
   // ==========================================================================
 
   async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null> {
-    return this.localLlm.embed(text, options);
+    if (this.remoteEmbed) {
+      return this._remoteEmbed(text, options);
+    }
+    return this.localLlm!.embed(text, options);
   }
 
   async embedBatch(texts: string[]): Promise<(EmbeddingResult | null)[]> {
-    return this.localLlm.embedBatch(texts);
+    if (this.remoteEmbed) {
+      return this._remoteEmbedBatch(texts);
+    }
+    return this.localLlm!.embedBatch(texts);
+  }
+
+  /**
+   * Single embedding via OpenRouter /embeddings API.
+   */
+  private async _remoteEmbed(text: string, _options?: EmbedOptions): Promise<EmbeddingResult | null> {
+    const model = this.embedModel!;
+    try {
+      const response = await this._embeddingsRequest(model, [text]);
+      if (!response || response.length === 0 || !response[0]) return null;
+      return {
+        embedding: response[0],
+        model,
+      };
+    } catch (error) {
+      console.error("RemoteLLM remote embed failed:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Batch embedding via OpenRouter /embeddings API.
+   * Sends all texts in a single request for efficiency.
+   */
+  private async _remoteEmbedBatch(texts: string[]): Promise<(EmbeddingResult | null)[]> {
+    if (texts.length === 0) return [];
+    const model = this.embedModel!;
+
+    // OpenRouter typically limits batch size; send in chunks of 96
+    const BATCH_SIZE = 96;
+    const results: (EmbeddingResult | null)[] = [];
+
+    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+      const chunk = texts.slice(i, i + BATCH_SIZE);
+      try {
+        const embeddings = await this._embeddingsRequest(model, chunk);
+        for (const emb of embeddings) {
+          results.push({ embedding: emb, model });
+        }
+        // Pad nulls if fewer embeddings returned than expected
+        while (results.length < i + chunk.length) {
+          results.push(null);
+        }
+      } catch (error) {
+        console.error(`RemoteLLM remote embedBatch failed (chunk ${i}-${i + chunk.length}):`, error);
+        for (let j = 0; j < chunk.length; j++) {
+          results.push(null);
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Call OpenRouter /embeddings endpoint.
+   */
+  private async _embeddingsRequest(model: string, inputs: string[]): Promise<number[][]> {
+    const url = `${this.remoteUrl}/embeddings`;
+
+    // OpenRouter supports both single string and array for input
+    const body = JSON.stringify({
+      model,
+      input: inputs.length === 1 ? inputs[0] : inputs,
+    });
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "(unreadable)");
+      throw new Error(`RemoteLLM embeddings API error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json() as {
+      data?: Array<{ embedding: number[]; index?: number }>;
+    };
+
+    if (!data.data || data.data.length === 0) {
+      return [];
+    }
+
+    // Sort by index to preserve order (OpenRouter may return out of order)
+    const sorted = [...data.data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    return sorted.map(item => item.embedding);
   }
 
   // ==========================================================================
@@ -259,7 +376,9 @@ Include an entry for every document index provided. Scores should be floats betw
   // ==========================================================================
 
   async dispose(): Promise<void> {
-    await this.localLlm.dispose();
+    if (this.localLlm) {
+      await this.localLlm.dispose();
+    }
   }
 
   // ==========================================================================

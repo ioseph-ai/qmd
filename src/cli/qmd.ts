@@ -77,6 +77,7 @@ import {
   type ReindexResult,
 } from "../store.js";
 import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, withLLMSession, pullModels, DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI, DEFAULT_MODEL_CACHE_DIR } from "../llm.js";
+import { RemoteLLM } from "../remote-llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -123,6 +124,27 @@ function getStore(): ReturnType<typeof createStore> {
   // RemoteLLM wiring is handled by createStore() in index.ts — do not duplicate here.
   }
   return store;
+}
+
+/**
+ * Ensure the store uses RemoteLLM when QMD_REMOTE_LLM_URL and API key are set.
+ * This allows CLI commands (embed, query, etc.) to use remote generation/embeddings
+ * just like the MCP server path via index.ts createStore.
+ */
+function ensureRemoteLlm(): void {
+  const remoteUrl = process.env.QMD_REMOTE_LLM_URL;
+  const remoteApiKey = process.env.QMD_REMOTE_LLM_API_KEY;
+  if (!remoteUrl || !remoteApiKey) return;
+
+  const s = getStore();
+  if (s.llm) return; // Already configured
+
+  s.llm = new RemoteLLM({
+    remoteUrl,
+    apiKey: remoteApiKey,
+    model: process.env.QMD_REMOTE_LLM_MODEL ?? "anthropic/claude-sonnet-4",
+    embedModel: process.env.QMD_EMBED_MODEL,
+  });
 }
 
 function getDb(): Database {
@@ -2956,6 +2978,7 @@ if (isMain) {
 
     case "embed":
       try {
+        ensureRemoteLlm();
         const maxDocsPerBatch = parseEmbedBatchOption("maxDocsPerBatch", cli.values["max-docs-per-batch"]);
         const maxBatchMb = parseEmbedBatchOption("maxBatchBytes", cli.values["max-batch-mb"]);
         await vectorIndex(DEFAULT_EMBED_MODEL, !!cli.values.force, {
@@ -3002,6 +3025,7 @@ if (isMain) {
         console.error("Usage: qmd vsearch [options] <query>");
         process.exit(1);
       }
+      ensureRemoteLlm();
       // Default min-score for vector search is 0.3
       if (!cli.values["min-score"]) {
         cli.opts.minScore = 0.3;
@@ -3015,6 +3039,7 @@ if (isMain) {
         console.error("Usage: qmd query [options] <query>");
         process.exit(1);
       }
+      ensureRemoteLlm();
       await querySearch(cli.query, cli.opts);
       break;
 
